@@ -49,12 +49,10 @@ local schema = {
             key = "inventory",
             type = "array",
             element = {
-                {
-                    type = "table",
-                    fields = {
-                        { key = "id", type = "integer" },
-                        { key = "count", type = "integer" }
-                    }
+                type = "table",
+                fields = {
+                    { key = "id", type = "integer" },
+                    { key = "count", type = "integer" }
                 }
             }
         }
