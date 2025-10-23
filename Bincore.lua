@@ -257,4 +257,129 @@ function Bincore.decode(encoded_string, schema)
     return value
 end
 
+-- 简单 LZ77 风格压缩 + base94 封装（容错：空字符串直接返回，出错时用 LuaAPI.log 并保证返回数据）
+function Bincore.compress(str)
+    if str == nil or str == "" then
+        return ""
+    end
+
+    local ok, result_or_err = pcall(function()
+        local n = #str
+        local window = 4096
+        local max_len = 255
+        local out = {}
+        local i = 1
+
+        while i <= n do
+            local search_start = math.max(1, i - window)
+            local best_len = 0
+            local best_offset = 0
+
+            for j = search_start, i - 1 do
+                local len = 0
+                -- 尽量快速比较字节
+                while len < max_len and (i + len) <= n and string.byte(str, j + len) == string.byte(str, i + len) do
+                    len = len + 1
+                end
+                if len > best_len then
+                    best_len = len
+                    best_offset = i - j
+                    -- 如果已经达到最大长度，可以提前退出该 j 的比较
+                    if best_len == max_len then break end
+                end
+            end
+
+            if best_len >= 3 then
+                -- 回指编码：标记(1) + offset(2 bytes little-endian) + length(1 byte)
+                table.insert(out, string.char(1))
+                local off = best_offset
+                table.insert(out, string.char(off & 0xFF))
+                table.insert(out, string.char((off >> 8) & 0xFF))
+                table.insert(out, string.char(best_len & 0xFF))
+                i = i + best_len
+            else
+                -- 文字编码：标记(0) + 原字节
+                table.insert(out, string.char(0))
+                table.insert(out, string.sub(str, i, i))
+                i = i + 1
+            end
+        end
+
+        local binary = table.concat(out)
+        return base94_encode(binary)
+    end)
+
+    if not ok then
+        -- 保护模式记录错误并返回尽可能合理的结果（base94 编码的原始数据）
+        pcall(function() print("compress_string error: " .. tostring(result_or_err)) end)
+        -- 尝试直接返回 base94_encode 的原始输入（如果再失败，最后返回原始字符串）
+        local safe_ok, safe_ret = pcall(function() return base94_encode(str) end)
+        if safe_ok then return safe_ret end
+        return str
+    end
+
+    return result_or_err
+end
+
+function Bincore.decompress(b94str)
+    if b94str == nil or b94str == "" then
+        return ""
+    end
+
+    local ok, result_or_err = pcall(function()
+        local binary = base94_decode(b94str)
+        local out = {}  -- 改用字符数组而非 table
+        local pos = 1
+        local n = #binary
+
+        while pos <= n do
+            local marker = string.byte(binary, pos)
+            pos = pos + 1
+            if marker == 0 then
+                -- 文字
+                if pos > n then error("decompress: 数据截断（literal）") end
+                table.insert(out, string.char(string.byte(binary, pos)))
+                pos = pos + 1
+            elseif marker == 1 then
+                -- 回指
+                if pos + 2 > n then error("decompress: 数据截断（offset/len）") end
+                local off_low = string.byte(binary, pos)
+                local off_high = string.byte(binary, pos + 1)
+                local offset = off_low | (off_high << 8)
+                local length = string.byte(binary, pos + 2)
+                pos = pos + 3
+                
+                local current_len = #out
+                local start_idx = current_len - offset + 1
+                if start_idx < 1 or start_idx > current_len then 
+                    error("decompress: 无效的 offset (offset=" .. offset .. ", current_len=" .. current_len .. ")")
+                end
+                
+                -- 逐字节复制（允许重叠，比如 offset < length 的情况）
+                for k = 0, length - 1 do
+                    local src_idx = start_idx + k
+                    -- 处理重叠情况：如果源索引超出当前长度，从已复制的部分继续读取
+                    if src_idx > #out then
+                        src_idx = start_idx + (k % offset)
+                    end
+                    table.insert(out, out[src_idx])
+                end
+            else
+                error("decompress: 未知标志 " .. tostring(marker))
+            end
+        end
+
+        return table.concat(out)
+    end)
+
+    if not ok then
+        pcall(function() print("decompress_string error: " .. tostring(result_or_err)) end)
+        -- 保护模式：尽量返回 base94 解码后的原始二进制（如果失败则返回原始输入）
+        local safe_ok, safe_ret = pcall(function() return base94_decode(b94str) end)
+        if safe_ok then return safe_ret end
+        return b94str
+    end
+
+    return result_or_err
+end
 return Bincore

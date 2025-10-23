@@ -7,9 +7,9 @@ local schema = {
             key = "vault",
             type = "table",
             fields = {
-                coin = { key = "coin", type = "integer" },
-                crystal = { key = "crystal", type = "integer" },
-                diamond = { key = "diamond", type = "integer" }
+                { key = "coin", type = "integer" },
+                { key = "crystal", type = "integer" },
+                { key = "diamond", type = "integer" }
             }
         },
         {
